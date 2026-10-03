@@ -1,10 +1,14 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import { pool } from '../config/database';
+import { runMigrations } from './migration-runner';
 
 // SQL lives at the repo root (db/), the runner lives with the backend code so
 // `npm run db:seed` (tsx src/db/seed.ts) resolves both the script and its
 // dependencies.
+//
+// Ensures schema migrations are up to date using the versioned migration runner
+// before applying seed data.
 //
 // seed.sql applied here uses a full 20-column INSERT (no implicit column
 // defaults) so every parity field is seeded explicitly: seller_email,
@@ -17,6 +21,9 @@ import { pool } from '../config/database';
 const SQL_DIR = path.join(__dirname, '../../../db');
 
 async function seed() {
+  console.log('🌱 Ensuring database migrations are up to date...\n');
+  await runMigrations(pool);
+
   console.log('🌱 Seeding sample invoices...\n');
 
   try {

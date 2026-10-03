@@ -1,4 +1,5 @@
 import type { CorsOptions } from 'cors';
+import { getMigrationStatus } from '../db/migration-runner';
 
 type RuntimeEnvironment = Record<string, string | undefined>;
 
@@ -11,6 +12,8 @@ export interface ReadinessCheck {
     horizonUrl: boolean;
     storageReady: boolean;
     horizonPing?: boolean;
+    databaseConnected?: boolean;
+    databaseMigration?: boolean;
   };
   reasons: string[];
   missing: string[];
@@ -145,6 +148,8 @@ export interface DeploymentReadinessOptions {
   storage?: string;
   pingHorizon?: boolean;
   timeoutMs?: number;
+  dbPool?: any;
+  migrationsDir?: string;
 }
 
 export async function deploymentReadinessAsync(
@@ -170,6 +175,47 @@ export async function deploymentReadinessAsync(
     checks.horizonPing = ping.ok;
     if (!ping.ok) {
       reasons.push(ping.error || 'Horizon ping check failed');
+    }
+  }
+
+  // Postgres-specific readiness: check connectivity and bundled version parity
+  if (options.storage === 'postgres') {
+    const targetPool = options.dbPool;
+    if (!targetPool) {
+      checks.storageReady = false;
+      checks.databaseConnected = false;
+      checks.databaseMigration = false;
+      reasons.push('PostgreSQL storage requires a configured database connection');
+    } else {
+      let isConnected = false;
+      try {
+        await targetPool.query('SELECT 1');
+        isConnected = true;
+        checks.databaseConnected = true;
+      } catch (err: any) {
+        checks.databaseConnected = false;
+        checks.storageReady = false;
+        reasons.push(`Database connectivity check failed: ${err.message}`);
+      }
+
+      if (isConnected) {
+        try {
+          const status = await getMigrationStatus(targetPool, { migrationsDir: options.migrationsDir });
+          if (status.isReady) {
+            checks.databaseMigration = true;
+          } else {
+            checks.databaseMigration = false;
+            checks.storageReady = false;
+            reasons.push(
+              `Database migration pending: applied version is ${status.latestApplied ?? 'none'}, bundled version is ${status.latestBundled}`
+            );
+          }
+        } catch (err: any) {
+          checks.databaseMigration = false;
+          checks.storageReady = false;
+          reasons.push(`Database migration check failed: ${err.message}`);
+        }
+      }
     }
   }
 

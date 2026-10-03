@@ -12,7 +12,7 @@ order.
 | Postgres server | `backend/src/server.ts` | full server, same route table via `routes/invoice.routes.ts` |
 | Storage contract | `backend/src/storage/invoice-storage.ts` | both adapters implement `InvoiceStorage` |
 | Adapters | `memory-invoice-storage.ts`, `postgres-invoice-storage.ts` | Postgres delegates to `InvoiceService` |
-| Schema | `db/schema.sql` | applied by `backend/src/db/migrate.ts` |
+| Schema | `db/migrations/` | applied by `backend/src/db/migrate.ts` (`migration-runner.ts`) |
 | Connection | `backend/src/config/database.ts` | `DATABASE_URL`, `ssl` forced in production, `max: 20` |
 
 The two adapters already agree on field names - `migrate.ts` states that the
@@ -78,7 +78,7 @@ cutover still resolve after it?
 
 **Before**
 
-1. Confirm the Postgres instance is reachable and `db/schema.sql` applies
+1. Confirm the Postgres instance is reachable and migrations apply
    cleanly to an empty database (`npm run db:migrate`), because a partial schema is
    worse than no cutover.
 2. Export the memory store (`GET /invoices` per seller, or a one-off dump) and

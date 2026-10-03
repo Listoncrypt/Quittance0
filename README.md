@@ -214,7 +214,7 @@ npm run dev:dual
 
 ```bash
 cd backend
-npm run db:migrate   # applies db/schema.sql (idempotent, safe to re-run)
+npm run db:migrate   # applies versioned migrations in db/migrations/ (idempotent, safe to re-run)
 npm run db:seed      # optional: two demo sellers for wallet-scoping visibility
 ```
 
@@ -371,13 +371,13 @@ restart evidence are documented in [`docs/PAYMENT_MONITOR.md`](./docs/PAYMENT_MO
 
 ```bash
 cd backend
-npm run db:migrate   # applies db/schema.sql (idempotent, safe to re-run)
+npm run db:migrate   # applies versioned migrations in db/migrations/ (idempotent, safe to re-run)
 npm run db:seed      # optional: sample invoices for two demo wallets
 ```
 
-- `db/schema.sql` — invoices, transactions, payment_events, `invoice_stats` view.
-  Re-running it also drops the legacy `users` table and `invoices.user_id` column
-  from older databases.
+- `db/migrations/` — versioned, forward-only migrations (0001_baseline, 0002_updates)
+  applied under `pg_advisory_lock` and tracked via `schema_migrations`.
+- `db/schema.sql` — reference baseline schema snapshot.
 - `db/seed.sql` — invoices for two demo seller wallets so wallet scoping is
   visible locally. Swap a seed `seller_public_key` for your own Freighter address
   to see the rows in your dashboard.

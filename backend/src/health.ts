@@ -1,6 +1,7 @@
 import type { Request, Response } from 'express';
 import { deploymentReadinessAsync, simulationAllowed } from './config/runtime';
 import { STELLAR_NETWORK } from './config/stellar';
+import { pool as defaultPool } from './config/database';
 
 export function healthPayload(storage: string) {
   return {
@@ -25,17 +26,29 @@ export function healthHandler(storage: string) {
 
 export const livenessHandler = healthHandler;
 
+export interface ReadinessHandlerOptions {
+  pool?: any;
+  migrationsDir?: string;
+}
+
 /**
  * Readiness probe handler (/api/ready, /ready, /readyz, /api/health/ready).
- * Validates critical environment variables (network, Horizon URL, CORS origins)
- * and optionally pings Horizon when configured. Fails fast with HTTP 503 when not ready.
+ * Validates critical environment variables (network, Horizon URL, CORS origins),
+ * optionally pings Horizon when configured, and in Postgres mode verifies database
+ * connectivity and that the latest applied migration version matches bundled migrations.
+ * Fails fast with HTTP 503 when not ready.
  */
-export function readinessHandler(storage: string) {
+export function readinessHandler(storage: string, options: ReadinessHandlerOptions = {}) {
   return async (req: Request, res: Response) => {
     const pingRequested = req.query.ping === 'true';
+    const isPostgres = storage === 'postgres';
+    const dbPool = options.pool !== undefined ? options.pool : (isPostgres ? defaultPool : undefined);
+
     const readiness = await deploymentReadinessAsync(process.env, {
       storage,
       pingHorizon: pingRequested ? true : undefined,
+      dbPool,
+      migrationsDir: options.migrationsDir,
     });
 
     res.status(readiness.ready ? 200 : 503).json({

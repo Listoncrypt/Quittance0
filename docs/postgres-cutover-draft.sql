@@ -1,4 +1,4 @@
--- REVIEW DRAFT ONLY. The executable schema is db/schema.sql.
+-- REVIEW DRAFT ONLY. The executable schema is managed via db/migrations/ (migration-runner.ts).
 -- IDs and memos are supplied by the snapshot importer and never regenerated.
 CREATE TABLE invoices (
   id UUID PRIMARY KEY,

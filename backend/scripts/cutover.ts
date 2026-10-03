@@ -13,6 +13,7 @@ import { resolve } from 'node:path';
 import { parseArgs } from 'node:util';
 import { pool } from '../src/config/database';
 import { memoryStorage } from '../src/storage/memory-storage';
+import { runMigrations } from '../src/db/migration-runner';
 import {
   exportMemorySnapshot,
   validateCutoverSnapshot,
@@ -75,7 +76,8 @@ Environment Variables:
       }
       process.exit(1);
     }
-    console.log(`[Cutover] Snapshot validation PASSED (${snapshot.count} invoices).`);
+    console.log(`[Cutover] Ensuring database migrations are up to date...`);
+    await runMigrations(pool);
 
     const isDryRun = Boolean(values['dry-run']);
     console.log(`[Cutover] Executing transactional import (dry-run: ${isDryRun})...`);

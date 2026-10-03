@@ -8,6 +8,8 @@ import { InvoiceService } from '../src/services/invoice.service.ts';
 import type { CreateInvoiceInput } from '../src/utils/validation.ts';
 import { PostgresInvoiceStorage } from '../src/storage/postgres-invoice-storage.ts';
 import type { PayerInfo, StoredInvoice } from '../src/storage/invoice-storage.ts';
+import { PaymentClaimError } from '../src/storage/invoice-storage.ts';
+import { runMigrations } from '../src/db/migration-runner.ts';
 
 const DATABASE_URL = process.env.DATABASE_URL;
 const SCHEMA_PATH = path.join(__dirname, '../../db/schema.sql');
@@ -32,7 +34,7 @@ describe('Invoice persistence on Postgres', { skip: DATABASE_URL ? false : 'DATA
 
   before(async () => {
     adminPool = new Pool({ connectionString: DATABASE_URL });
-    await adminPool.query(fs.readFileSync(SCHEMA_PATH, 'utf-8'));
+    await runMigrations(adminPool);
   });
 
   after(async () => {
@@ -310,5 +312,86 @@ describe('Invoice persistence on Postgres', { skip: DATABASE_URL ? false : 'DATA
       "SELECT COUNT(*)::int AS c FROM invoices WHERE memo LIKE 'INV-DEMO-%'"
     );
     assert.equal(result.rows[0].c, 4, 'seed rows should be exactly 4 after two runs (ON CONFLICT DO NOTHING)');
+  });
+
+  it('settling one tx hash on two invoices returns typed claim error on migrated database (mapped via uq_invoices_payment_tx_hash)', async () => {
+    const pool = new Pool({ connectionString: DATABASE_URL });
+    const service = new InvoiceService(pool);
+
+    try {
+      const inv1 = await service.createInvoice(createInput(SELLER_A, { amount: 15 }));
+      const inv2 = await service.createInvoice(createInput(SELLER_A, { amount: 20 }));
+      const sharedTxHash = 'e'.repeat(64);
+
+      // Settle invoice 1
+      await service.markAsPaid(inv1.id, sharedTxHash, PAYER, undefined, { settledAt: new Date() });
+
+      // Attempt to settle invoice 2 with the same txHash
+      await assert.rejects(
+        () => service.markAsPaid(inv2.id, sharedTxHash, PAYER, undefined, { settledAt: new Date() }),
+        (err: any) => {
+          assert.ok(err instanceof PaymentClaimError, `Expected PaymentClaimError, got ${err.constructor?.name}: ${err.message}`);
+          assert.equal(err.txHash, sharedTxHash);
+          assert.equal(err.invoiceId, inv2.id);
+          assert.equal(err.holderInvoiceId, inv1.id);
+          return true;
+        }
+      );
+    } finally {
+      await pool.end();
+    }
+  });
+
+  it('enforces the PAID-row CHECK constraint added in migration 0002', async () => {
+    const pool = new Pool({ connectionString: DATABASE_URL });
+    try {
+      await assert.rejects(
+        () => pool.query(`
+          INSERT INTO invoices (id, seller_public_key, amount, memo, status, payment_tx_hash, paid_at, created_at, expires_at)
+          VALUES (gen_random_uuid(), $1, 10, 'INV-VIOLATE-PAID', 'PAID', NULL, NULL, NOW(), NOW() + INTERVAL '7 days')
+        `, [SELLER_A]),
+        /violates check constraint "invoices_paid_status_check"/
+      );
+    } finally {
+      await pool.end();
+    }
+  });
+
+  it('verifies payment_events.created_at and transactions.processed_at are TIMESTAMPTZ from migration 0002', async () => {
+    const pool = new Pool({ connectionString: DATABASE_URL });
+    try {
+      const colRes = await pool.query(`
+        SELECT table_name, column_name, data_type
+        FROM information_schema.columns
+        WHERE table_schema = 'public'
+          AND (
+            (table_name = 'payment_events' AND column_name = 'created_at') OR
+            (table_name = 'transactions' AND column_name = 'processed_at')
+          )
+        ORDER BY table_name;
+      `);
+      assert.equal(colRes.rows.length, 2);
+      for (const row of colRes.rows) {
+        assert.equal(row.data_type, 'timestamp with time zone', `${row.table_name}.${row.column_name} must be TIMESTAMPTZ`);
+      }
+    } finally {
+      await pool.end();
+    }
+  });
+
+  it('verifies invoices_payment_tx_hash_unique was dropped and uq_invoices_payment_tx_hash remains', async () => {
+    const pool = new Pool({ connectionString: DATABASE_URL });
+    try {
+      const idxRes = await pool.query(`
+        SELECT indexname FROM pg_indexes
+        WHERE tablename = 'invoices'
+          AND indexname IN ('uq_invoices_payment_tx_hash', 'invoices_payment_tx_hash_unique');
+      `);
+      const names = idxRes.rows.map(r => r.indexname);
+      assert.ok(names.includes('uq_invoices_payment_tx_hash'), 'uq_invoices_payment_tx_hash must exist');
+      assert.equal(names.includes('invoices_payment_tx_hash_unique'), false, 'invoices_payment_tx_hash_unique must be dropped');
+    } finally {
+      await pool.end();
+    }
   });
 });

@@ -61,17 +61,17 @@ cd backend
 npm run db:migrate
 ```
 
-The migration script (`db/schema.sql`) creates the invoices, transactions,
-payment_events, and payment_monitor_checkpoints tables; adds all required
-indexes; and adds the `payment_tx_hash` uniqueness constraint.  Re-running the
-migration on an existing database is safe — every `CREATE TABLE`, `ALTER TABLE`,
-and `CREATE INDEX` statement uses `IF NOT EXISTS`.
+The migration runner (`backend/src/db/migration-runner.ts`) applies versioned,
+forward-only SQL files from `db/migrations/` under `pg_advisory_lock`, tracking
+applied migrations and SHA-256 checksums in the `schema_migrations` table.
+Re-running the migration runner on an up-to-date database is an idempotent no-op.
+Pre-existing databases adopt the baseline (0001) without replay.
 
 ### 3. Verify the schema applied cleanly
 
 ```bash
 psql "$DATABASE_URL" -c "\dt"
-# Expected: invoices, transactions, payment_events, payment_monitor_checkpoints
+# Expected: invoices, transactions, payment_events, payment_monitor_checkpoints, schema_migrations
 ```
 
 ### 4. Start the server
@@ -176,7 +176,7 @@ therefore sufficient to preserve proof download and email behavior.
 
 ## Target table and ERD
 
-The executable schema remains db/schema.sql. The review-only minimal draft is
+The executable schema is managed via versioned migrations in `db/migrations/` (driven by `backend/src/db/migration-runner.ts`). The review-only minimal draft is
 docs/postgres-cutover-draft.sql and follows StoredInvoice exactly.
 
 ```mermaid
